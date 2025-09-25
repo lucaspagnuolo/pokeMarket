@@ -18,6 +18,7 @@ DATA_DIR = "data"
 # Mappatura file -> nome espansione
 EXPANSIONS = {
     "prezzi_pokemon_Surging-Sparks.xlsx": "Scintille Folgoranti",
+    "prezzi_pokemon_Prismatic-Evolutions.xlsx": "Evoluzioni Prismatiche"
     "prezzi_pokemon_Paradox-Rift.xlsx": "Paradosso Temporale",
     "df_prezzi151-aggiornato-completo.xlsx": "151",
     "prezzi_pokemon_Destined-Rivals.xlsx": "Destini Rivali",
