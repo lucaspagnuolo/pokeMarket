@@ -26,8 +26,8 @@ COL_MED = "Media Prezzi (IT, NM)"
 EXPANSION_NAME_OVERRIDES = {
     "Surging Sparks": "Scintille Folgoranti",
     "Paradox Rift": "Paradosso Temporale",
-    "151":"151",
     "Destined Rivals": "Destini Rivali",
+    "151":"151",
     "Prismatic Evolutions": "Evoluzioni Prismatiche",
     # Aggiungi qui eventuali altri override
 }
@@ -402,4 +402,97 @@ column_config = {
     COL_MED: st.column_config.NumberColumn("Prezzo medio (€)", format="%.2f"),
     "Prezzi_Lista": st.column_config.ListColumn("Ultimi 5 prezzi (€)"),
     "Preferito": st.column_config.CheckboxColumn("⭐ Preferito"),
-    "CardKey": None,  #
+    "CardKey": None,  # nascosta
+}
+edited = st.data_editor(
+    view[display_cols],
+    hide_index=True,
+    column_config=column_config,
+    disabled=["Espansione", COL_CARD, COL_ID, "Cardmarket", COL_MED, "Prezzi_Lista", "CardKey"],
+    width="stretch",          # <-- sostituisce use_container_width=True
+    height=520,
+    key="cards_editor",
+)
+
+# Sincronizza preferiti con bottone di salvataggio
+if username:
+    edited_favs = set(edited.loc[edited["Preferito"] == True, "CardKey"].tolist())
+    if edited_favs != user_favs:
+        st.info("Hai modificato i preferiti nella tabella. Premi **Salva preferiti** per confermare.")
+
+    col1, col2, col3 = st.columns([1, 1, 2])
+    with col1:
+        if st.button("💾 Salva preferiti", type="primary"):
+            ok = save_user_favorites(username, edited_favs, backend)
+            if ok:
+                st.success("Preferiti salvati!")
+                st.rerun()
+            else:
+                st.error("Errore durante il salvataggio dei preferiti.")
+    with col2:
+        dl_obj = {"users": {username: sorted(list(edited_favs))}}
+        st.download_button(
+            "⬇️ Esporta preferiti",
+            data=json.dumps(dl_obj, ensure_ascii=False, indent=2),
+            file_name=f"preferiti_{username}.json",
+            mime="application/json",
+        )
+    with col3:
+        up = st.file_uploader("⬆️ Importa preferiti (JSON)", type=["json"], label_visibility="visible")
+        if up is not None:
+            try:
+                imported = json.load(up)
+                arr = imported.get("users", {}).get(username, [])
+                merged = set(arr).union(edited_favs)
+                ok = save_user_favorites(username, merged, backend)
+                if ok:
+                    st.success("Preferiti importati e salvati!")
+                    st.rerun()
+                else:
+                    st.error("Errore salvataggio dopo import.")
+            except Exception as e:
+                st.error(f"File JSON non valido: {e}")
+
+# ===== Griglia anteprime =====
+st.markdown("---")
+st.subheader("📊 Anteprime con mini-grafico (ultimi 5 prezzi)")
+
+MAX_CARDS = 200
+preview = work if not st.session_state.get("show_only_favs_override", False) else work[work["Preferito"]]
+if show_only_favs:
+    preview = work[work["Preferito"]]
+preview = preview.head(MAX_CARDS)
+
+cols = st.columns(3)
+for i, (_, row) in enumerate(preview.iterrows()):
+    with cols[i % 3]:
+        box = st.container(border=True)
+        with box:
+            st.markdown(f"**{row[COL_CARD]}**  \n*{row['Espansione']}*")
+            url = url_or_empty(row.get(COL_LINK, ""))
+            if url:
+                st.markdown(url, help="Apri la pagina su Cardmarket")
+            med = row.get(COL_MED, np.nan)
+            if pd.notna(med):
+                st.metric("Prezzo medio (€)", f"{med:.2f}")
+            else:
+                st.write("Prezzo medio: n/d")
+
+            prices = row.get("Prezzi_Lista", [])
+            if prices:
+                st.line_chart(prices, height=100)
+                st.caption("Ultimi 5 prezzi: " + ", ".join(f"{p:.2f}€" for p in prices))
+            else:
+                st.caption("Nessun dato prezzi recenti")
+
+            # Toggle preferito (non scrive subito su GitHub; serve il bottone sopra)
+            key = row["CardKey"]
+            is_fav = key in user_favs
+            new_val = st.toggle("⭐ Preferito", value=is_fav, key=f"fav_{key}")
+            if username and new_val != is_fav:
+                if new_val:
+                    user_favs.add(key)
+                else:
+                    user_favs.discard(key)
+                st.session_state["show_only_favs_override"] = show_only_favs
+                st.info("Hai cambiato un preferito in anteprima. Premi **Salva preferiti** sopra per confermare.")
