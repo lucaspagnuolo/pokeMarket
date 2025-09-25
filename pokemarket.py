@@ -1,3 +1,4 @@
+
 # pokemarket.py
 import os
 import re
@@ -17,7 +18,7 @@ DATA_DIR = "data"
 
 # Nomi colonne attese
 COL_CARD = "Carta"
-COL_ID = "ID completo"
+COL_ID = "ID completo"  # usato solo internamente per CardKey
 COL_LINK = "Link"
 COL_5P = "Primi 5 Prezzi (IT, NM)"
 COL_MED = "Media Prezzi (IT, NM)"
@@ -27,16 +28,14 @@ EXPANSION_NAME_OVERRIDES = {
     "Surging Sparks": "Scintille Folgoranti",
     "Paradox Rift": "Paradosso Temporale",
     "Destined Rivals": "Destini Rivali",
-    "151":"151",
+    "151": "151",
     "Prismatic Evolutions": "Evoluzioni Prismatiche",
-    # Aggiungi qui eventuali altri override
 }
 
 # ============== UTILS ==============
 _num_re = re.compile(r"[-+]?\d*[\.,]?\d+")
 
 def parse_price_list(value):
-    """Converte 'Primi 5 Prezzi (IT, NM)' in lista di float, tollerante a formati vari."""
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return []
     if isinstance(value, (list, tuple)):
@@ -46,7 +45,7 @@ def parse_price_list(value):
                 continue
             try:
                 out.append(float(str(x).replace(",", ".")))
-            except Exception:
+            except:
                 pass
         return out
     text = str(value)
@@ -55,7 +54,7 @@ def parse_price_list(value):
     for n in nums:
         try:
             out.append(float(n.replace(",", ".")))
-        except Exception:
+        except:
             pass
     return out
 
@@ -64,46 +63,20 @@ def to_float(value):
         return np.nan
     try:
         return float(str(value).replace(",", "."))
-    except Exception:
+    except:
         return np.nan
 
 def prettify_expansion_label(filename: str) -> str:
-    """
-    Genera un nome umano leggibile a partire dal nome file.
-    Esempi:
-      - prezzi_pokemon_Prismatic-Evolutions.xlsx -> "Evoluzioni Prismatiche" (via override)
-      - prezzi_pokemon_Destined-Rivals.xlsx     -> "Destini Rivali"
-      - df_prezzi151-aggiornato-completo.xlsx   -> "151"
-    """
     base = os.path.splitext(os.path.basename(filename))[0]
-
-    # Caso speciale: set "151"
     if "151" in base:
         return "151"
-
-    # Rimuovi prefissi comuni
     stem = re.sub(r'^(prezzi[_-]?pokemon[_-]?|df[_-]?prezzi[_-]?)', '', base, flags=re.IGNORECASE)
-
-    # Pulisci separatori
     stem = stem.replace("_", " ").replace("-", " ")
-    label = stem.strip()
-    if not label:
-        label = base
-
-    # Title case (rispetta maiuscole/minuscole standard)
+    label = stem.strip() or base
     label_tc = label.title()
-
-    # Applica override italiano se presente
     return EXPANSION_NAME_OVERRIDES.get(label_tc, label_tc)
 
 def discover_expansions(data_dir: str):
-    """
-    Scansiona la cartella data_dir e trova tutti i .xlsx.
-    Ritorna:
-      - mapping { filename -> expansion_label }
-      - file_list ordinata
-      - index_signature (per invalidare la cache quando i file cambiano)
-    """
     files = []
     try:
         for fname in os.listdir(data_dir):
@@ -111,12 +84,8 @@ def discover_expansions(data_dir: str):
                 files.append(fname)
     except FileNotFoundError:
         files = []
-
-    files = sorted(files)  # ordine alfabetico
-
+    files = sorted(files)
     mapping = {fname: prettify_expansion_label(fname) for fname in files}
-
-    # Firma semplice della "versione" dei dati: (filename, size)
     index_signature = []
     for f in files:
         p = os.path.join(data_dir, f)
@@ -125,16 +94,12 @@ def discover_expansions(data_dir: str):
         except OSError:
             sz = -1
         index_signature.append((f, sz))
-    index_signature = tuple(index_signature)
-
-    return mapping, files, index_signature
+    return mapping, files, tuple(index_signature)
 
 # ============== CARICAMENTO DATI ==============
 @st.cache_data(show_spinner=True)
 def load_one_excel(path, espansione):
     df = pd.read_excel(path, engine="openpyxl")
-
-    # Normalizza colonne essenziali se mancanti
     if COL_CARD not in df.columns:
         df[COL_CARD] = df.get("Nome", pd.Series([f"Carta {i}" for i in range(len(df))]))
     if COL_ID not in df.columns:
@@ -145,29 +110,16 @@ def load_one_excel(path, espansione):
         df[COL_5P] = ""
     if COL_MED not in df.columns:
         df[COL_MED] = np.nan
-
-    # Seleziona/riordina le colonne principali
     keep = [COL_CARD, COL_ID, COL_LINK, COL_5P, COL_MED]
     df = df[keep].copy()
-
-    # Aggiungi espansione
     df["Espansione"] = espansione
-
-    # Normalizza prezzi
     df[COL_MED] = df[COL_MED].apply(to_float)
     df["Prezzi_Lista"] = df[COL_5P].apply(parse_price_list)
-
-    # Chiave unica stabile
     df["CardKey"] = df["Espansione"].astype(str) + "|" + df[COL_ID].astype(str)
-
     return df
 
 @st.cache_data(show_spinner=True)
 def load_all_data_dynamic(data_dir, expansions_map: dict, index_signature: tuple):
-    """
-    Carica tutti i file indicati in expansions_map (filename -> label).
-    index_signature serve solo a invalidare la cache quando file/size cambiano.
-    """
     frames, missing = [], []
     for filename, esp in expansions_map.items():
         path = os.path.join(data_dir, filename)
@@ -183,6 +135,7 @@ def load_all_data_dynamic(data_dir, expansions_map: dict, index_signature: tuple
     df = pd.concat(frames, ignore_index=True)
     df = df.drop_duplicates(subset=["CardKey"])
     return df, missing
+
 
 # ============== PERSISTENZA PREFERITI (GitHub o locale) ==============
 def _gh_headers(token):
@@ -300,33 +253,17 @@ def save_user_favorites(username, favorites_set, backend):
     else:
         return write_favorites_local(obj)
 
+
 # ============== UI ==============
 st.title(APP_TITLE)
 
-# Scopri dinamicamente i dataset disponibili
 exp_map, file_list, index_sig = discover_expansions(DATA_DIR)
 
-# Sidebar: Utente + Diagnostica
 with st.sidebar:
     st.header("👤 Utente")
-    username = st.text_input(
-        "Nome utente (serve per ricaricare i tuoi Preferiti)",
-        value=st.session_state.get("username", "")
-    ).strip()
+    username = st.text_input("Nome utente", value=st.session_state.get("username", "")).strip()
     if username:
         st.session_state["username"] = username
-
-    st.markdown("---")
-    st.header("🧪 Diagnostica")
-    secrets_ok = bool(st.secrets.get("GITHUB_TOKEN", None) and st.secrets.get("GH_REPO", None))
-    if secrets_ok:
-        st.success("Persistenza Preferiti: GitHub ✅")
-        st.caption(
-            f"Repo: {st.secrets.get('GH_REPO')} | Branch: {st.secrets.get('GH_BRANCH', 'main')} | Path: {st.secrets.get('GH_FAV_PATH', 'data/favorites.json')}"
-        )
-    else:
-        st.info("Persistenza Preferiti: locale/temporanea ⚠️ (configura i Secrets per GitHub)")
-
     st.markdown("---")
     st.header("📁 Dataset trovati")
     if file_list:
@@ -334,25 +271,16 @@ with st.sidebar:
             st.write(f"• `{f}` → **{exp_map.get(f)}**")
     else:
         st.warning("Nessun `.xlsx` trovato nella cartella `data/`.")
-
     if st.button("🔄 Ricarica dati / clear cache"):
         st.cache_data.clear()
         st.rerun()
 
-# Caricamento dati (dinamico)
 with st.spinner("Caricamento dati..."):
     df, missing = load_all_data_dynamic(DATA_DIR, exp_map, index_sig)
-
-if missing:
-    st.warning(
-        "File indicati ma non trovati in `data/`:\n- " + "\n- ".join(missing) +
-        "\nVerifica i nomi dei file e la posizione."
-    )
 
 if df.empty:
     st.stop()
 
-# Filtri
 with st.sidebar:
     st.markdown("---")
     st.header("🔎 Filtri")
@@ -363,27 +291,21 @@ with st.sidebar:
     ascending = st.checkbox("Ordine crescente", value=True)
     show_only_favs = st.checkbox("Mostra solo Preferiti ⭐", value=False)
 
-# Applica filtri
 work = df[df["Espansione"].isin(sel_esp)].copy()
 if query.strip():
     q = query.strip().lower()
     work = work[work[COL_CARD].astype(str).str.lower().str.contains(q)]
-
-# Ordina
 if sort_by in work.columns:
     work = work.sort_values(by=sort_by, ascending=ascending, kind="mergesort")
 
-# Carica preferiti per utente
-if not username:
-    st.info("Inserisci un nome utente nella sidebar per abilitare i Preferiti.")
-    user_favs = set()
-    backend = ("local", {"users": {}}, None)
-else:
+# Carica preferiti (codice invariato)
+user_favs = set()
+backend = ("local", {"users": {}}, None)
+if username:
     user_favs, backend = load_user_favorites(username)
-
 work = work.assign(Preferito=work["CardKey"].isin(user_favs))
 
-# ===== Tabella principale =====
+# ===== Tabella principale (SENZA colonna ID completo) =====
 st.subheader("📄 Carte")
 st.caption("Modifica la colonna ⭐Preferito per aggiungere/rimuovere carte ai tuoi preferiti.")
 
@@ -391,28 +313,30 @@ def url_or_empty(u: str):
     u = str(u) if not pd.isna(u) else ""
     return u if u.startswith("http") else ""
 
-view = work[["Espansione", COL_CARD, COL_ID, COL_LINK, COL_MED, "Prezzi_Lista", "Preferito", "CardKey"]].copy()
+view = work[["Espansione", COL_CARD, COL_LINK, COL_MED, "Prezzi_Lista", "Preferito", "CardKey"]].copy()
 view["Cardmarket"] = view[COL_LINK].apply(url_or_empty)
 view = view.drop(columns=[COL_LINK])
 
-display_cols = ["Espansione", COL_CARD, COL_ID, "Cardmarket", COL_MED, "Prezzi_Lista", "Preferito", "CardKey"]
+display_cols = ["Espansione", COL_CARD, "Cardmarket", COL_MED, "Prezzi_Lista", "Preferito", "CardKey"]
 
 column_config = {
     "Cardmarket": st.column_config.LinkColumn("Cardmarket", help="Vai alla carta su Cardmarket"),
     COL_MED: st.column_config.NumberColumn("Prezzo medio (€)", format="%.2f"),
     "Prezzi_Lista": st.column_config.ListColumn("Ultimi 5 prezzi (€)"),
     "Preferito": st.column_config.CheckboxColumn("⭐ Preferito"),
-    "CardKey": None,  # nascosta
+    "CardKey": None,
 }
+
 edited = st.data_editor(
     view[display_cols],
     hide_index=True,
     column_config=column_config,
-    disabled=["Espansione", COL_CARD, COL_ID, "Cardmarket", COL_MED, "Prezzi_Lista", "CardKey"],
-    width="stretch",          # <-- sostituisce use_container_width=True
+    disabled=["Espansione", COL_CARD, "Cardmarket", COL_MED, "Prezzi_Lista", "CardKey"],
+    width="stretch",
     height=520,
     key="cards_editor",
 )
+
 
 # Sincronizza preferiti con bottone di salvataggio
 if username:
